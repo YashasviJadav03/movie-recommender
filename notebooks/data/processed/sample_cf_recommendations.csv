@@ -1,11 +1,11 @@
 movieId,title,predicted_rating
-513,"Third Man, The (1949)",4.8907369401979714
-919,"City of Lost Children, The (1995)",4.890434522326005
-302,L.A. Confidential (1997),4.8451063258347284
-276,Leaving Las Vegas (1995),4.841883490255983
-483,Casablanca (1942),4.822058817189768
-474,Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb (1963),4.802703235665072
-285,Secrets & Lies (1996),4.779155285730106
-508,"People vs. Larry Flynt, The (1996)",4.73400258410708
-318,Schindler's List (1993),4.733330913353524
-408,"Close Shave, A (1995)",4.712628511358382
+285,Secrets & Lies (1996),4.676898460880026
+603,Rear Window (1954),4.667477560737334
+641,Paths of Glory (1957),4.647248961622883
+483,Casablanca (1942),4.620712193576697
+408,"Close Shave, A (1995)",4.611895677425263
+512,Wings of Desire (1987),4.606517263656868
+474,Dr. Strangelove or: How I Learned to Stop Worrying and Love the Bomb (1963),4.561979352232161
+427,To Kill a Mockingbird (1962),4.52958168349724
+511,Lawrence of Arabia (1962),4.495693675135066
+302,L.A. Confidential (1997),4.491599571256587
