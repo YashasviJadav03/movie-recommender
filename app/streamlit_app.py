@@ -1,4 +1,5 @@
 import os
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -6,15 +7,13 @@ import pandas as pd
 import streamlit as st
 from rapidfuzz import process
 
-try:
-    from surprise import Dataset, Reader, SVD
-except Exception:
-    Dataset = None
-    Reader = None
-    SVD = None
-
-
+# Add project root to Python path
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+
+from src.content import get_content_recommendations, get_movie_popularity, validate_movie_exists
+from src.collaborative import train_svd_model, get_user_recommendations, validate_user_exists
+from src.hybrid import get_hybrid_movie_recommendations, get_hybrid_user_recommendations
 
 
 def processed_dir() -> Path:
@@ -40,7 +39,7 @@ def load_data():
         st.error(
             "Missing processed data. Expected ratings_clean.csv in: "
             + str(pdir)
-            + "\n\nRun your preprocessing notebooks/pipeline to generate data/processed."
+            + "\n\nRun: python src/preprocessing.py to generate processed data."
         )
         st.stop()
 
@@ -51,32 +50,17 @@ def load_data():
 
     movieid_to_index = pd.Series(movies_content.index, index=movies_content["movieId"]).to_dict()
     titles = movies_content["title"].astype(str).tolist()
-
-    pop = ratings["movieId"].value_counts().rename("count").reset_index()
-    pop.columns = ["movieId", "count"]
-    movies_pop = movies.merge(pop, on="movieId", how="left", validate="m:1").fillna({"count": 0})
+    
+    popularity = get_movie_popularity(ratings)
+    movies_pop = movies.merge(popularity, on="movieId", how="left", validate="m:1").fillna({"count": 0})
+    
     return ratings, movies, movies_content, cosine_sim, movieid_to_index, titles, movies_pop
 
 
 @st.cache_resource
 def train_cf(ratings: pd.DataFrame):
-    if SVD is None:
-        return None
-    reader = Reader(rating_scale=(0.5, 5))
-    data = Dataset.load_from_df(ratings[["userId", "movieId", "rating"]], reader)
-    trainset = data.build_full_trainset()
-    model = SVD(n_factors=100, n_epochs=20, random_state=42)
-    model.fit(trainset)
-    return model
-
-
-def minmax(s: pd.Series) -> pd.Series:
-    mn, mx = float(s.min()), float(s.max())
-    if mx == mn:
-        return pd.Series(0.0, index=s.index)
-    return (s - mn) / (mx - mn)
-
-
+    """Train collaborative filtering model with parameters from config."""
+    return train_svd_model(ratings)
 
 
 def show_recs(df: pd.DataFrame):
@@ -142,61 +126,6 @@ def show_recs(df: pd.DataFrame):
         st.markdown("\n".join([f"- {title}" for title in df['title']]))
 
 
-def recommend_content_movie(title: str, movies_content: pd.DataFrame, cosine_sim: np.ndarray, top_n: int):
-    idx = int(movies_content.index[movies_content["title"].astype(str) == title][0])
-    sims = pd.Series(cosine_sim[idx], index=movies_content.index).sort_values(ascending=False).iloc[1 : top_n + 1]
-    out = movies_content.loc[sims.index, ["movieId", "title"]].copy()
-    out["score"] = sims.values
-    return out
-
-
-def recommend_movie_hybrid(title: str, movies_content: pd.DataFrame, cosine_sim: np.ndarray, movies_pop: pd.DataFrame, top_n: int):
-    content = recommend_content_movie(title, movies_content, cosine_sim, top_n=200)
-    pop = movies_pop.set_index("movieId")["count"]
-    df = content.copy()
-    df["pop"] = df["movieId"].map(pop).fillna(0.0)
-    df["score"] = 0.7 * minmax(df["score"]) + 0.3 * minmax(df["pop"])
-    return df.sort_values("score", ascending=False).head(top_n)[["movieId", "title", "score"]]
-
-
-def recommend_user_cf(user_id: int, ratings: pd.DataFrame, movies: pd.DataFrame, cf_model, top_n: int):
-    if cf_model is None:
-        return pd.DataFrame(columns=["movieId", "title", "score"])
-    seen = set(ratings.loc[ratings["userId"] == user_id, "movieId"].values)
-    candidates = movies.loc[~movies["movieId"].isin(seen), ["movieId", "title"]].copy()
-    candidates["score"] = candidates["movieId"].apply(lambda mid: cf_model.predict(user_id, mid).est)
-    return candidates.sort_values("score", ascending=False).head(top_n)
-
-
-def recommend_user_hybrid(
-    user_id: int,
-    ratings: pd.DataFrame,
-    movies: pd.DataFrame,
-    cosine_sim: np.ndarray,
-    movieid_to_index: dict,
-    cf_model,
-    top_n: int,
-):
-    if cf_model is None:
-        return pd.DataFrame(columns=["movieId", "title", "score"])
-    seen = set(ratings.loc[ratings["userId"] == user_id, "movieId"].values)
-    candidates = movies.loc[~movies["movieId"].isin(seen), ["movieId", "title"]].copy()
-    candidates["cf"] = candidates["movieId"].apply(lambda mid: cf_model.predict(user_id, mid).est)
-
-    liked = ratings[(ratings["userId"] == user_id) & (ratings["rating"] >= 4)]["movieId"].unique()
-    liked_idx = [movieid_to_index[mid] for mid in liked if mid in movieid_to_index]
-    if liked_idx:
-        vec = cosine_sim[liked_idx].mean(axis=0)
-        candidates["content"] = candidates["movieId"].apply(
-            lambda mid: float(vec[movieid_to_index[mid]]) if mid in movieid_to_index else 0.0
-        )
-    else:
-        candidates["content"] = 0.0
-
-    candidates["score"] = 0.6 * minmax(candidates["cf"]) + 0.4 * minmax(candidates["content"])
-    return candidates.sort_values("score", ascending=False).head(top_n)[["movieId", "title", "score"]]
-
-
 def search_movies(query: str, titles: list, min_score: int = 60) -> list:
     """Search for movies using fuzzy matching with improved results"""
     if not query or len(query) < 2:
@@ -247,14 +176,25 @@ def render_movie_mode(titles, movies_content, cosine_sim, movies_pop, top_n: int
     if algo == "CF":
         st.info("ℹ️ For user-based recommendations, switch to 'User ID' mode.")
         return
+    
+    # Validate movie exists
+    if not validate_movie_exists(selected, movies_content):
+        st.error(f"Movie '{selected}' not found in database.")
+        return
 
     with st.spinner(f"Finding similar movies to '{selected}'..."):
-        recs = (
-            recommend_movie_hybrid(selected, movies_content, cosine_sim, movies_pop, top_n)
-            if algo == "Hybrid"
-            else recommend_content_movie(selected, movies_content, cosine_sim, top_n)
-        )
-        show_recs(recs)
+        if algo == "Hybrid":
+            popularity = get_movie_popularity(movies_pop)
+            recs = get_hybrid_movie_recommendations(
+                selected, movies_content, cosine_sim, popularity, top_n
+            )
+        else:
+            recs = get_content_recommendations(selected, movies_content, cosine_sim, top_n)
+        
+        if recs.empty:
+            st.warning("No recommendations found for this movie.")
+        else:
+            show_recs(recs)
 
 
 def render_user_mode(
@@ -281,25 +221,31 @@ def render_user_mode(
         user_id = st.number_input(
             "Enter your User ID:",
             min_value=1,
+            max_value=943,
             value=user_id,
             step=1,
-            help="Enter a number between 1 and 100,000"
+            help="Enter a number between 1 and 943"
         )
     
-    if user_id not in set(ratings["userId"].values):
+    # Validate user exists
+    if not validate_user_exists(user_id, ratings):
         st.info("🌟 Welcome! Since you're new, here are some popular movies to get you started.")
-        recs = movies_pop.sort_values("count", ascending=False).head(top_n)[["movieId", "title"]].copy()
-        recs["score"] = movies_pop.sort_values("count", ascending=False).head(top_n)["count"].values
+        recs = movies_pop.nlargest(top_n, "count")[["movieId", "title"]].copy()
+        recs["score"] = movies_pop.nlargest(top_n, "count")["count"].values
     else:
         with st.spinner("Analyzing your preferences..."):
-            recs = (
-                recommend_user_hybrid(user_id, ratings, movies, cosine_sim, movieid_to_index, cf_model, top_n)
-                if algo == "Hybrid"
-                else recommend_user_cf(user_id, ratings, movies, cf_model, top_n)
-            )
+            if algo == "Hybrid":
+                recs = get_hybrid_user_recommendations(
+                    user_id, ratings, movies, cosine_sim, movieid_to_index, cf_model, top_n
+                )
+            else:
+                recs = get_user_recommendations(user_id, ratings, movies, cf_model, top_n)
     
-    st.markdown(f"#### Recommended for You (User #{user_id})")
-    show_recs(recs)
+    if recs.empty:
+        st.warning("Unable to generate recommendations. Please try a different user ID.")
+    else:
+        st.markdown(f"#### Recommended for You (User #{user_id})")
+        show_recs(recs)
 
 
 def main():

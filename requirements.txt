@@ -7,3 +7,4 @@ ipykernel
 streamlit
 rapidfuzz
 requests
+pytest>=7.0
