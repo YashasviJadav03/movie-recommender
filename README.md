@@ -90,8 +90,6 @@ streamlit run app/streamlit_app.py
 
 The application will be available at `http://localhost:8501`
 
-For detailed commands and troubleshooting, see `QUICK_START.md`.
-
 ## Usage
 
 The Streamlit interface provides two recommendation modes:
@@ -174,9 +172,6 @@ Complete dependency list available in `requirements.txt`.
 - Unit tests for core recommendation functions
 - Centralized configuration for easy parameter tuning
 - Proper separation of concerns between UI and business logic
-- Comprehensive documentation and quick start guide
-
-For detailed information about improvements, see `IMPROVEMENTS.md` or `SUMMARY.md` for a quick overview.
 
 ## Notes
 
