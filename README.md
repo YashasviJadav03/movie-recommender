@@ -2,6 +2,10 @@
 
 A movie recommendation system implementing content-based filtering, collaborative filtering, and hybrid approaches using Python, scikit-learn, and Streamlit.
 
+## Live Demo
+
+🚀 **Try it now:** https://movie-recommender-cwtfvez93whjq9hpyszenu.streamlit.app/
+
 ## Overview
 
 This project demonstrates three recommendation strategies with an interactive web interface for exploring and comparing different recommendation methods.
